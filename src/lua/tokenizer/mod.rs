@@ -1,4 +1,4 @@
-use std::{iter::Peekable, str::Chars, fmt::Write};
+use std::{fmt::Write, iter::Peekable, str::Chars};
 
 use str_buf::StrBuf;
 
@@ -44,7 +44,12 @@ impl TokenMeta {
     }
 
     fn start_size(start: Position, len: u32) -> Self {
-        Self { line: start.line as u32, col: start.col as u32, offset: start.offset as u32, len }
+        Self {
+            line: start.line as u32,
+            col: start.col as u32,
+            offset: start.offset as u32,
+            len,
+        }
     }
 }
 
@@ -62,10 +67,12 @@ pub enum TokenizerError<'a> {
     InvalidBase2Digit(char),
     NoNumberAfterBasePrefix,
     MalformedString(byteyarn::YarnBox<'a, str>),
-    // NumberParseError(NumberError),
+    ParseIntError(std::num::ParseIntError),
+    ParseFloatError(std::num::ParseFloatError),
+    IntegerTooLargeError,
 }
 
-enum InvalidString{
+enum InvalidString {
     Valid,
     InvalidNewline,
 }
@@ -87,13 +94,14 @@ pub struct Tokenizer<'a> {
     string_skip_white: bool,
 
     include_comments: bool,
+    allow_multiline_quote: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum StringEnd{
+enum StringEnd {
     Quote,
     Apostrophe,
-    Complex(u32)
+    Complex(u32),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -109,8 +117,6 @@ enum State {
     Tilde,
     Colon,
     Dot,
-    NumericStartZero,
-    NumericStart,
     DotDot,
     Ident,
     SingleLineComment,
@@ -124,6 +130,17 @@ enum State {
     LBrack(u32),
     LBrackBackoff(u32),
     StringEnd(u32, u32),
+
+    NumericStartZero,
+    NumericStart,
+    NumericDecimal,
+    NumericDecimalNumberE,
+    NumericDecimalNumberENumber,
+    NumericBinStart,
+    NumericHexStart,
+    NumericDecimalNumberEPM,
+    NumericBin,
+    NumericHex,
 }
 
 pub enum SSBuilder<'a> {
@@ -183,11 +200,17 @@ impl<'a> Tokenizer<'a> {
             string_start: Position::default(),
             string_status: InvalidString::Valid,
             string_skip_white: false,
+            allow_multiline_quote: false,
         }
     }
 
     pub fn include_comments(mut self) -> Self {
         self.include_comments = true;
+        self
+    }
+
+    pub fn allow_multiline_quote(mut self) -> Self {
+        self.allow_multiline_quote = true;
         self
     }
 
@@ -227,6 +250,46 @@ impl<'a> Tokenizer<'a> {
             }
         }
         self.state = State::String(ret_state);
+    }
+}
+
+enum NumberType {
+    Integer,
+    Binary,
+    Hex,
+    Float,
+    FloatHex,
+}
+
+fn parse_number(str: &str, r#type: NumberType) -> Result<Token<'_>, TokenizerError<'_>> {
+    let mut buf = str_buf::StrBuf::<100>::new();
+    for char in str.chars(){
+        if char != '_'{
+            if buf.write_char(char).is_err(){
+                return Err(TokenizerError::IntegerTooLargeError)
+            }
+        }
+    }
+    let str = buf.as_str();
+    match r#type {
+        NumberType::Integer => str
+            .parse::<i64>()
+            .map(Token::IntegerLiteral)
+            .map_err(TokenizerError::ParseIntError),
+        NumberType::Binary => i64::from_str_radix(&str[2..], 2)
+            .map(Token::IntegerLiteral)
+            .map_err(TokenizerError::ParseIntError),
+        NumberType::Hex => i64::from_str_radix(&str[2..], 16)
+            .map(Token::IntegerLiteral)
+            .map_err(TokenizerError::ParseIntError),
+        NumberType::Float => str
+            .parse::<f64>()
+            .map(Token::FloatingLiteral)
+            .map_err(TokenizerError::ParseFloatError),
+        NumberType::FloatHex => str
+            .parse::<f64>()
+            .map(Token::FloatingLiteral)
+            .map_err(TokenizerError::ParseFloatError),
     }
 }
 
@@ -289,13 +352,13 @@ impl<'a> std::iter::Iterator for Tokenizer<'a> {
                         self.string_status = InvalidString::Valid;
                         self.string_skip_white = false;
                         self.state = State::String(StringEnd::Quote)
-                    },
+                    }
                     '\'' => {
                         self.string_start = processing;
                         self.string_status = InvalidString::Valid;
                         self.string_skip_white = false;
                         self.state = State::String(StringEnd::Apostrophe)
-                    },
+                    }
                     ':' => self.state = State::Colon,
                     '.' => self.state = State::Dot,
                     '[' => {
@@ -304,7 +367,7 @@ impl<'a> std::iter::Iterator for Tokenizer<'a> {
                         self.string_skip_white = false;
                         self.string_escape_start = self.current;
                         self.state = State::LBrack(0)
-                    },
+                    }
 
                     '+' => ret = Some(Ok(Token::Plus)),
                     '*' => ret = Some(Ok(Token::Asterick)),
@@ -377,52 +440,53 @@ impl<'a> std::iter::Iterator for Tokenizer<'a> {
                     Some('.') => ret = Some(Ok(Token::DotDotDot)),
                     _ => unconsume_ret!(self, Ok(Token::DotDot)),
                 },
-                State::MinusMinus => match c{
-                    Some('[') =>  self.state = State::MinusMinusLBrack,
+                State::MinusMinus => match c {
+                    Some('[') => self.state = State::MinusMinusLBrack,
                     _ => {
                         consume = false;
                         self.state = State::SingleLineComment;
                     }
-
-                }
-                State::MinusMinusLBrack => match c{
-                    Some('[') =>  self.state = State::MultiLineComment,
+                },
+                State::MinusMinusLBrack => match c {
+                    Some('[') => self.state = State::MultiLineComment,
                     _ => {
                         consume = false;
                         self.state = State::SingleLineComment;
                     }
-                }
-                State::MultiLineComment => match c{
+                },
+                State::MultiLineComment => match c {
                     None => ret = Some(Err(TokenizerError::UnclosedMultiLineComment)),
                     Some('-') => self.state = State::MultiLineCommentMinus,
                     _ => {}
-                }
-                State::MultiLineCommentMinus => match c{
+                },
+                State::MultiLineCommentMinus => match c {
                     None => ret = Some(Err(TokenizerError::UnclosedMultiLineComment)),
                     Some('-') => self.state = State::MultiLineCommentMinusMinus,
                     _ => {
                         consume = false;
                         self.state = State::MultiLineComment;
                     }
-                }
-                State::MultiLineCommentMinusMinus => match c{
+                },
+                State::MultiLineCommentMinusMinus => match c {
                     None => ret = Some(Err(TokenizerError::UnclosedMultiLineComment)),
                     Some(']') => self.state = State::MultiLineCommentMinusMinusRBrack,
                     _ => {
                         consume = false;
                         self.state = State::MultiLineComment;
                     }
-                }
-                State::MultiLineCommentMinusMinusRBrack => match c{
+                },
+                State::MultiLineCommentMinusMinusRBrack => match c {
                     None => ret = Some(Err(TokenizerError::UnclosedMultiLineComment)),
-                    Some(']') => ret = Some(Ok(Token::SingleLineComment(
-                        &self.str[self.start.offset + 4..self.current.offset - 4],
-                    ))),
+                    Some(']') => {
+                        ret = Some(Ok(Token::SingleLineComment(
+                            &self.str[self.start.offset + 4..self.current.offset - 4],
+                        )))
+                    }
                     _ => {
                         consume = false;
                         self.state = State::MultiLineComment;
                     }
-                }
+                },
                 State::SingleLineComment => match c {
                     Some('\n') | None => {
                         ret = Some(Ok(Token::SingleLineComment(
@@ -431,11 +495,11 @@ impl<'a> std::iter::Iterator for Tokenizer<'a> {
                     }
                     _ => {}
                 },
-                State::LBrack(indent) => match c{
+                State::LBrack(indent) => match c {
                     Some('[') => {
                         self.string_start = processing;
                         self.state = State::String(StringEnd::Complex(indent))
-                    },
+                    }
                     Some('=') => self.state = State::LBrack(indent + 1),
                     _ => {
                         // this is horrible
@@ -445,18 +509,18 @@ impl<'a> std::iter::Iterator for Tokenizer<'a> {
                         ret = Some(Ok(Token::LBracket));
                         ok_ret_state = State::LBrackBackoff(indent);
                     }
-                }
+                },
                 State::LBrackBackoff(indent) => {
                     consume = false;
-                    if indent == 0{
+                    if indent == 0 {
                         self.state = State::Default;
-                    }else if indent == 1{
+                    } else if indent == 1 {
                         ret_meta = Some(TokenMeta::start_size(self.string_escape_start, 1));
                         self.string_escape_start.col += 1;
                         self.string_escape_start.offset += 1;
                         ok_ret_state = State::LBrackBackoff(indent - 1);
                         ret = Some(Ok(Token::Eq))
-                    }else{
+                    } else {
                         ret_meta = Some(TokenMeta::start_size(self.string_escape_start, 2));
                         self.string_escape_start.col += 2;
                         self.string_escape_start.offset += 2;
@@ -465,11 +529,13 @@ impl<'a> std::iter::Iterator for Tokenizer<'a> {
                     }
                 }
                 State::String(escape) => {
-                    let end = matches!((c, escape), (Some('\''), StringEnd::Apostrophe)
-                    | (Some('"'), StringEnd::Quote));
-                    
-                    'exit_str:{
-                        if end{
+                    let end = matches!(
+                        (c, escape),
+                        (Some('\''), StringEnd::Apostrophe) | (Some('"'), StringEnd::Quote)
+                    );
+
+                    'exit_str: {
+                        if end {
                             let yarn = match self.string_builder.take() {
                                 SSBuilder::None => byteyarn::YarnBox::new(""),
                                 SSBuilder::Ref(str) => byteyarn::YarnBox::from(str),
@@ -478,79 +544,81 @@ impl<'a> std::iter::Iterator for Tokenizer<'a> {
                                 }
                                 SSBuilder::Alloc(string) => byteyarn::Yarn::from_string(string),
                             };
-                            match self.string_status{
+                            match self.string_status {
                                 InvalidString::Valid => ret = Some(Ok(Token::StringLiteral(yarn))),
-                                _ => ret = Some(Err(TokenizerError::MalformedString(yarn)))
+                                _ => ret = Some(Err(TokenizerError::MalformedString(yarn))),
                             }
                             break 'exit_str;
                         }
-                        if matches!((c, escape), (Some('\n'), StringEnd::Apostrophe | StringEnd::Quote)) {
+                        if matches!(
+                            (c, escape),
+                            (Some('\n'), StringEnd::Apostrophe | StringEnd::Quote)
+                        ) && !self.allow_multiline_quote
+                        {
                             self.string_status = InvalidString::InvalidNewline;
                         }
-                        if self.string_skip_white{
-                            if c.map(char::is_whitespace).unwrap_or(false){
+                        if self.string_skip_white {
+                            if c.map(char::is_whitespace).unwrap_or(false) {
                                 match self.string_builder.take() {
                                     SSBuilder::None => {
-                                        self.string_builder = SSBuilder::Small(str_buf::StrBuf::new())
+                                        self.string_builder =
+                                            SSBuilder::Small(str_buf::StrBuf::new())
                                     }
                                     SSBuilder::Ref(val) => {
-                                        if val.len() <= 15{
-                                            self.string_builder = SSBuilder::Small(str_buf::StrBuf::from_str(val))
-                                        }else{
+                                        if val.len() <= 15 {
+                                            self.string_builder =
+                                                SSBuilder::Small(str_buf::StrBuf::from_str(val))
+                                        } else {
                                             self.string_builder = SSBuilder::Alloc(val.to_string());
                                         }
                                     }
-                                    val => {
-                                        self.string_builder = val
-                                    }
+                                    val => self.string_builder = val,
                                 }
                                 break 'exit_str;
-                            }else{
+                            } else {
                                 self.string_skip_white = false;
                             }
                         }
-                        if let (Some(']'), StringEnd::Complex(start)) = (c, escape){
+                        if let (Some(']'), StringEnd::Complex(start)) = (c, escape) {
                             self.string_escape_start = self.current;
                             self.state = State::StringEnd(start, 0);
                             break 'exit_str;
                         }
-                        match c{
+                        match c {
                             Some('\\') => {
                                 self.string_escape_start = self.current;
                                 self.state = State::StringEscape(escape);
                             }
-                            Some(c) => {
-                                match self.string_builder.take() {
-                                    SSBuilder::None => {
-                                        self.string_builder = SSBuilder::Ref(
-                                            &self.str[self.string_start.offset..processing.offset],
-                                        )
-                                    }
-                                    SSBuilder::Ref(_) => {
-                                        self.string_builder = SSBuilder::Ref(
-                                            &self.str[self.string_start.offset..processing.offset],
-                                        )
-                                    }
-                                    SSBuilder::Small(mut small) => {
-                                        if small.write_char(c).is_ok() {
-                                            self.string_builder = SSBuilder::Small(small);
-                                        } else {
-                                            let mut string = small.to_string();
-                                            string.push(c);
-                                            self.string_builder = SSBuilder::Alloc(string);
-                                        }
-                                    }
-                                    SSBuilder::Alloc(mut string) => {
+                            Some(c) => match self.string_builder.take() {
+                                SSBuilder::None => {
+                                    self.string_builder = SSBuilder::Ref(
+                                        &self.str[self.string_start.offset..processing.offset],
+                                    )
+                                }
+                                SSBuilder::Ref(_) => {
+                                    self.string_builder = SSBuilder::Ref(
+                                        &self.str[self.string_start.offset..processing.offset],
+                                    )
+                                }
+                                SSBuilder::Small(mut small) => {
+                                    if small.write_char(c).is_ok() {
+                                        self.string_builder = SSBuilder::Small(small);
+                                    } else {
+                                        let mut string = small.to_string();
                                         string.push(c);
                                         self.string_builder = SSBuilder::Alloc(string);
                                     }
                                 }
-                            }
+                                SSBuilder::Alloc(mut string) => {
+                                    string.push(c);
+                                    self.string_builder = SSBuilder::Alloc(string);
+                                }
+                            },
                             None => ret = Some(Err(TokenizerError::UnclosedStringLiteral)),
                         }
                     }
                 }
-                State::StringEnd(start, level) => match c{
+                State::StringEnd(start, level) => match c {
                     Some('=') => self.state = State::StringEnd(start, level + 1),
                     Some(']') if start == level => {
                         let yarn = match self.string_builder.take() {
@@ -561,9 +629,9 @@ impl<'a> std::iter::Iterator for Tokenizer<'a> {
                             }
                             SSBuilder::Alloc(string) => byteyarn::Yarn::from_string(string),
                         };
-                        match self.string_status{
+                        match self.string_status {
                             InvalidString::Valid => ret = Some(Ok(Token::StringLiteral(yarn))),
-                            _ => ret = Some(Err(TokenizerError::MalformedString(yarn)))
+                            _ => ret = Some(Err(TokenizerError::MalformedString(yarn))),
                         }
                     }
                     _ => {
@@ -579,8 +647,9 @@ impl<'a> std::iter::Iterator for Tokenizer<'a> {
                                 )
                             }
                             SSBuilder::Small(mut small) => {
-                                let str = &self.str[self.string_escape_start.offset..processing.offset];
-                                if small.remaining() >= str.len(){
+                                let str =
+                                    &self.str[self.string_escape_start.offset..processing.offset];
+                                if small.remaining() >= str.len() {
                                     small.push_str(str);
                                     self.string_builder = SSBuilder::Small(small);
                                 } else {
@@ -590,15 +659,16 @@ impl<'a> std::iter::Iterator for Tokenizer<'a> {
                                 }
                             }
                             SSBuilder::Alloc(mut string) => {
-                                let str = &self.str[self.string_escape_start.offset..processing.offset];
+                                let str =
+                                    &self.str[self.string_escape_start.offset..processing.offset];
                                 string.push_str(str);
                                 self.string_builder = SSBuilder::Alloc(string);
                             }
                         }
                         self.state = State::String(StringEnd::Complex(start));
                     }
-                }
-                State::StringEscape(end) => match c{
+                },
+                State::StringEscape(end) => match c {
                     Some('0') => self.escape_char_finish('\0', end),
                     Some('n') => self.escape_char_finish('\n', end),
                     Some('r') => self.escape_char_finish('\r', end),
@@ -615,16 +685,154 @@ impl<'a> std::iter::Iterator for Tokenizer<'a> {
                         err_ret_state = State::String(end);
                         update_start_on_error = false;
                         ret_meta = Some(TokenMeta::start_end(self.string_escape_start, processing));
-                        ret = Some(Err(TokenizerError::InvalidEscape(&self.str[self.string_escape_start.offset..processing.offset])))
-                    },
+                        ret = Some(Err(TokenizerError::InvalidEscape(
+                            &self.str[self.string_escape_start.offset..processing.offset],
+                        )))
+                    }
                     None => {
                         err_ret_state = State::Eof;
-                        ret = Some(Err(TokenizerError::UnfinishedEscapeSequence( &self.str[self.string_escape_start.offset..processing.offset])))
-                    },
-                }
+                        ret = Some(Err(TokenizerError::UnfinishedEscapeSequence(
+                            &self.str[self.string_escape_start.offset..processing.offset],
+                        )))
+                    }
+                },
 
-                State::NumericStartZero => todo!(),
-                State::NumericStart => todo!(),
+                State::NumericStart => match c {
+                    Some('0'..='9') => {}
+                    Some('.') => self.state = State::NumericDecimal,
+                    Some('e'|'E') => {
+                        self.state = State::NumericDecimalNumberE;
+                    }
+                    Some('_') => {}
+                    _ => {
+                        consume = false;
+                        ret = Some(parse_number(
+                            &self.str[self.start.offset..self.current.offset],
+                            NumberType::Integer,
+                        ));
+                    }
+                },
+                State::NumericStartZero => match c {
+                    Some('b') => {
+                        self.state = State::NumericBinStart;
+                    }
+                    Some('x') => {
+                        self.state = State::NumericHexStart;
+                    }
+                    Some('0'..='9') => {
+                        self.state = State::NumericStart;
+                    }
+                    Some('.') => self.state = State::NumericDecimal,
+                    Some('_') => {}
+                    _ => {
+                        consume = false;
+                        ret = Some(parse_number(
+                            &self.str[self.start.offset..self.current.offset],
+                            NumberType::Integer,
+                        ));
+                    }
+                },
+                State::NumericDecimal => match c {
+                    Some('0'..='9') => {}
+                    Some('e'|'E') => {
+                        self.state = State::NumericDecimalNumberE;
+                    }
+                    Some('_') => {}
+                    _ => {
+                        consume = false;
+                        ret = Some(parse_number(
+                            &self.str[self.start.offset..self.current.offset],
+                            NumberType::Float,
+                        ));
+                    }
+                },
+                State::NumericDecimalNumberE => match c {
+                    Some('0'..='9') => {
+                        self.state = State::NumericDecimalNumberENumber;
+                    }
+                    Some('+' | '-') => {
+                        self.state = State::NumericDecimalNumberEPM;
+                    }
+                    Some('_') => {}
+                    _ => {
+                        consume = false;
+                        ret = Some(Err(TokenizerError::EmptyExponent));
+                    }
+                },
+                State::NumericDecimalNumberEPM => match c {
+                    Some('0'..='9') => {
+                        self.state = State::NumericDecimalNumberENumber;
+                    }
+                    Some('_') => {}
+                    _ => {
+                        consume = false;
+                        ret = Some(Err(TokenizerError::EmptyExponent));
+                    }
+                },
+                State::NumericDecimalNumberENumber => match c {
+                    Some('0'..='9' | '_') => {}
+                    _ => {
+                        consume = false;
+                        ret = Some(parse_number(
+                            &self.str[self.start.offset..self.current.offset],
+                            NumberType::Float,
+                        ));
+                    }
+                },
+                State::NumericBinStart => match c {
+                    Some('0'..='1') => {
+                        self.state = State::NumericBin;
+                    }
+                    Some('_') => {}
+                    Some(c @ '2'..='9') => {
+                        err_ret_state = State::NumericBin;
+                        ret_meta = Some(TokenMeta::start_end(self.current, processing));
+                        update_start_on_error = false;
+                        ret = Some(Err(TokenizerError::InvalidBase2Digit(c)))
+                    }
+                    _ => {
+                        consume = false;
+                        ret = Some(Err(TokenizerError::NoNumberAfterBasePrefix))
+                    }
+                },
+                State::NumericBin => match c {
+                    Some('0'..='1') => {}
+                    Some('_') => {}
+                    Some(c @ '2'..='9') => {
+                        err_ret_state = State::NumericBin;
+                        ret_meta = Some(TokenMeta::start_end(self.current, processing));
+                        update_start_on_error = false;
+                        ret = Some(Err(TokenizerError::InvalidBase2Digit(c)))
+                    }
+                    _ => {
+                        consume = false;
+                        ret = Some(parse_number(
+                            &self.str[self.start.offset..self.current.offset],
+                            NumberType::Binary,
+                        ));
+                    }
+                },
+                State::NumericHexStart => match c {
+                    Some('0'..='9' | 'a'..='f' | 'A'..='F') => {
+                        self.state = State::NumericHex;
+                    }
+                    Some('_') => {}
+                    _ => {
+                        consume = false;
+                        ret = Some(Err(TokenizerError::NoNumberAfterBasePrefix))
+                    }
+                },
+                State::NumericHex => match c {
+                    Some('0'..='9' | 'a'..='f' | 'A'..='F') => {}
+                    Some('_') => {}
+                    _ => {
+                        consume = false;
+                        ret = Some(parse_number(
+                            &self.str[self.start.offset..self.current.offset],
+                            NumberType::Hex,
+                        ));
+                    }
+                },
                 State::Eof => return None,
             }
 
@@ -705,6 +913,24 @@ pub fn test_tokenizer_full() {
     a = b + c(print or io.write)('done')
      
     a = b + c; (print or io.write)('done')
+
+    0 1 2 3 4 5 6 7 8 9 10 55 1234567890
+0x55 0xFF 0x1234567890abcdefABCDEF
+0b110101011010
+1.
+0.
+0.0
+0.1
+1234567890.1234567890
+1234567890.1234567890e0
+1234567890.1234567890e1234567890
+1234567890.1234567890e+1234567890
+1234567890.1234567890e-1234567890
+
+0xFF_FF_FF
+0_0_0_1_2
+0b_1_0_1
+12_45_._43_e_-_1
 
     3   345   0xff   0xBEBADA
     3.0     3.1416     314.16e-2     0.31416E1     34e1
@@ -814,8 +1040,6 @@ pub fn test_tokenizer_syntax() {
         }
     }
 }
-
-
 
 #[test]
 pub fn test_tokenizer_errors() {
