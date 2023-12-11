@@ -1,8 +1,13 @@
 use byteyarn::YarnBox;
 
+use crate::lua::util::sstr::Sstr;
+
 use super::*;
 
+
+
 #[derive(Debug, PartialEq, Clone)]
+#[repr(align(8))]
 pub enum Token<'a> {
     /// +
     Plus,
@@ -96,13 +101,13 @@ pub enum Token<'a> {
     Until,
     While,
 
-    Ident(&'a str),
+    Ident(Sstr<'a>),
     StringLiteral(YarnBox<'a, str>),
     IntegerLiteral(i64),
     FloatingLiteral(f64),
 
-    SingleLineComment(&'a str),
-    MultiLineComment(&'a str),
+    SingleLineComment(Sstr<'a>),
+    MultiLineComment(Sstr<'a>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

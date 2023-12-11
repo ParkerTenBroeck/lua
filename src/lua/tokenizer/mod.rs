@@ -51,6 +51,24 @@ impl TokenMeta {
             len,
         }
     }
+
+    pub fn extend_range(self, other: Self) -> Self {
+        let start_of = self.offset.min(other.offset);
+        let end = (self.offset + self.len).max(other.offset + other.len);
+        let (line, col) = if self.line < other.line {
+            (self.line, self.col)
+        } else if self.line > other.line {
+            (other.line, other.col)
+        } else {
+            (self.line, self.col.min(other.col))
+        };
+        Self {
+            line,
+            col,
+            offset: start_of,
+            len: end - start_of,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -182,7 +200,7 @@ fn ident(ident: &str) -> Token {
         "true" => Token::True,
         "until" => Token::Until,
         "while" => Token::While,
-        o => Token::Ident(o),
+        o => Token::Ident(o.into()),
     }
 }
 
@@ -263,10 +281,10 @@ enum NumberType {
 
 fn parse_number(str: &str, r#type: NumberType) -> Result<Token<'_>, TokenizerError<'_>> {
     let mut buf = str_buf::StrBuf::<100>::new();
-    for char in str.chars(){
-        if char != '_'{
-            if buf.write_char(char).is_err(){
-                return Err(TokenizerError::IntegerTooLargeError)
+    for char in str.chars() {
+        if char != '_' {
+            if buf.write_char(char).is_err() {
+                return Err(TokenizerError::IntegerTooLargeError);
             }
         }
     }
@@ -400,7 +418,7 @@ impl<'a> std::iter::Iterator for Tokenizer<'a> {
                     c => ret = Some(Err(TokenizerError::InvalidChar(c))),
                 },
                 State::Ident => match c {
-                    Some(c) if c.is_alphabetic() || c == '_' => {}
+                    Some(c) if c.is_alphanumeric() || c == '_' => {}
                     _ => unconsume_ret!(
                         self,
                         Ok(ident(&self.str[self.start.offset..self.current.offset]))
@@ -479,7 +497,7 @@ impl<'a> std::iter::Iterator for Tokenizer<'a> {
                     None => ret = Some(Err(TokenizerError::UnclosedMultiLineComment)),
                     Some(']') => {
                         ret = Some(Ok(Token::SingleLineComment(
-                            &self.str[self.start.offset + 4..self.current.offset - 4],
+                            self.str[self.start.offset + 4..self.current.offset - 4].into(),
                         )))
                     }
                     _ => {
@@ -490,7 +508,7 @@ impl<'a> std::iter::Iterator for Tokenizer<'a> {
                 State::SingleLineComment => match c {
                     Some('\n') | None => {
                         ret = Some(Ok(Token::SingleLineComment(
-                            &self.str[self.start.offset + 2 * '/'.len_utf8()..self.current.offset],
+                            self.str[self.start.offset + 2 * '/'.len_utf8()..self.current.offset].into(),
                         )))
                     }
                     _ => {}
@@ -700,7 +718,7 @@ impl<'a> std::iter::Iterator for Tokenizer<'a> {
                 State::NumericStart => match c {
                     Some('0'..='9') => {}
                     Some('.') => self.state = State::NumericDecimal,
-                    Some('e'|'E') => {
+                    Some('e' | 'E') => {
                         self.state = State::NumericDecimalNumberE;
                     }
                     Some('_') => {}
@@ -734,7 +752,7 @@ impl<'a> std::iter::Iterator for Tokenizer<'a> {
                 },
                 State::NumericDecimal => match c {
                     Some('0'..='9') => {}
-                    Some('e'|'E') => {
+                    Some('e' | 'E') => {
                         self.state = State::NumericDecimalNumberE;
                     }
                     Some('_') => {}
@@ -935,6 +953,8 @@ pub fn test_tokenizer_full() {
     3   345   0xff   0xBEBADA
     3.0     3.1416     314.16e-2     0.31416E1     34e1
     0x0.1E  0xA23p-4   0X1.921FB54442D18P+1
+    😉😌 
+    こんにちは
     "#;
 
     let tokenizer = Tokenizer::new(data).include_comments();
