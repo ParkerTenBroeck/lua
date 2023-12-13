@@ -4,8 +4,6 @@ use crate::lua::util::sstr::Sstr;
 
 use super::*;
 
-
-
 #[derive(Debug, PartialEq, Clone)]
 #[repr(align(8))]
 pub enum Token<'a> {
@@ -110,34 +108,66 @@ pub enum Token<'a> {
     MultiLineComment(Sstr<'a>),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Span<T> {
-    pub span: TokenMeta,
-    pub val: T,
+pub enum Kind {
+    Message,
+    Warning,
+    Error(u32),
 }
 
-impl<T> Span<T> {
-    pub fn new(val: T, span: TokenMeta) -> Self {
-        Self { val, span }
+impl std::fmt::Display for Kind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Kind::Message => write!(f, "{BOLD}message{RESET}"),
+            Kind::Warning => write!(f, "{BOLD}{YELLOW}warning{RESET}"),
+            Kind::Error(e) => write!(f, "{BOLD}{RED}error[E{}]{RESET}", e),
+        }
     }
 }
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub struct TokenMeta {
-    pub line: u32,
-    pub col: u32,
-    pub offset: u32,
-    pub len: u32,
+pub struct SpanFmt<'a> {
+    pub span: SpanD,
+    pub original: &'a str,
+    pub message: Option<&'a str>,
+    pub kind: Kind,
+    pub filename: &'a str,
 }
 
-impl TokenMeta {
-    pub(super) fn start_end(start: Position, end: Position) -> Self {
-        TokenMeta {
-            line: start.line as u32,
-            col: start.col as u32,
-            offset: start.offset as u32,
-            len: (end.offset - start.offset) as u32,
+const BOLD: &str = "\x1b[1m";
+const RED: &str = "\x1b[31m";
+const YELLOW: &str = "\x1b[33m";
+const BLUE: &str = "\x1b[34m";
+const GREEN: &str = "\x1b[32m";
+const RESET: &str = "\x1b[0;22m";
+
+impl<'a> std::fmt::Display for SpanFmt<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(message) = self.message {
+            writeln!(f, "{}{RESET}{BOLD}: {}", self.kind, message)?;
+        } else {
+            writeln!(f, "{}{RESET}", self.kind)?;
         }
+
+        let line = self.span.line + 1;
+
+        // this is funny
+        let space = "                                                                                                                                                                                                                                                                ";
+        let space = &space[0..((line as f32).log10().floor() as u8) as usize + 1];
+
+        writeln!(
+            f,
+            "{BLUE}{BOLD}{space}--> {RESET}{}:{}:{}",
+            self.filename,
+            line,
+            self.span.col + 1
+        )?;
+        writeln!(f, "{BLUE}{BOLD}{space} |")?;
+        writeln!(
+            f,
+            "{} |{RESET} {}",
+            line,
+            &self.original[self.span.offset as usize..(self.span.offset + self.span.len) as usize]
+        )?;
+        writeln!(f, "{BLUE}{BOLD}{space} |{RESET}")
     }
 }
 
@@ -154,5 +184,4 @@ pub enum TokenizerError<'a> {
     EmptyExponent,
     InvalidBase2Digit(char),
     NoNumberAfterBasePrefix,
-    // NumberParseError(NumberError),
 }

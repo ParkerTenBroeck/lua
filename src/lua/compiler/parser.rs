@@ -1,6 +1,9 @@
-use std::{collections::HashMap, iter::Peekable};
+use std::{collections::{HashMap, VecDeque}, iter::Peekable};
 
-use crate::lua::tokenizer::{token::Token, Span, Tokenizer, TokenizerError};
+use crate::lua::tokenizer::{
+    token::{SpanFmt, Token},
+    Span, Tokenizer, TokenizerError,
+};
 
 #[derive(Debug, Default, Clone, PartialEq)]
 pub enum LuaType {
@@ -44,6 +47,8 @@ pub struct ExprList(Vec<Expr>);
 #[derive(Debug, Clone)]
 pub struct AttNameList(Vec<()>);
 
+#[derive(Debug, Clone)]
+pub struct Attrib(Name);
 
 #[derive(Debug, Clone)]
 pub struct FunctionBody(ParamList, Block);
@@ -59,6 +64,12 @@ pub struct ParamList {
     list: NameList,
     trailing: bool,
 }
+
+#[derive(Debug, Clone)]
+pub struct FuncName(Name, Vec<Name>, Option<Name>);
+
+#[derive(Debug, Clone)]
+pub struct Name(String);
 
 #[derive(Debug, Clone)]
 pub enum Expr {
@@ -128,7 +139,30 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn next_n<const N: usize>(&mut self) -> [Option<Span<Token<'a>>>; N]{
+        // None.unwrap
+        std::array::from_fn(|_|{self.next_tok()})
+    }
+
+    fn test(&mut self){
+        macro_rules! tok {
+            ($pat:pat) => {
+                Some(Span{val: $pat, ..})
+            };
+            ($pat:pat, $span:ident) => {
+                Some(Span{val: $pat, span: $span})
+            };
+        }
+        match self.next_n::<3>(){
+            [tok!(Token::Lt, ltspan), tok!(Token::Ident(ident), identspan), tok!(Token::Gt, gtspan)] => {
+                println!("{}", ident)
+            }
+            _ => {}
+        }
+    }
+
     fn peek_tok(&mut self) -> Option<&Span<Token<'a>>> {
+        
         loop {
             let tok = self.tokenizer.peek()?;
             if tok.is_ok() {
@@ -160,26 +194,29 @@ impl<'a> Parser<'a> {
         Ok(top_level)
     }
 
-    pub fn parse_statement_list(&mut self) -> Vec<Statement>{
+    pub fn parse_statement_list(&mut self) -> Vec<Statement> {
         let mut vec = Vec::new();
 
-        while let Some(statement) = self.parse_statement(){
+        while let Some(statement) = self.parse_statement() {
             vec.push(statement.val);
         }
 
         vec
     }
 
-    pub fn parse_statement(&mut self) -> Option<Span<Statement>>{
-        let Span { mut span, val: start } = if let Some(some) = self.peek_tok(){
+    pub fn parse_statement(&mut self) -> Option<Span<Statement>> {
+        let Span {
+            mut span,
+            val: start,
+        } = if let Some(some) = self.peek_tok() {
             some
-        }else{
+        } else {
             return None;
         };
-        let state = match start{
+        let state = match start {
             Token::Break => Statement::Break,
             Token::Goto => {
-                next_match!(self, tok, nspan, 
+                next_match!(self, tok, nspan,
                     if Token::Ident(ident), {
                         span = span.extend_range(nspan);
                         Statement::Goto(ident.to_string())
@@ -188,7 +225,7 @@ impl<'a> Parser<'a> {
                         todo!();
                     }
                 )
-            },
+            }
             _ => return None,
         };
         Some(Span::new(state, span))
@@ -196,6 +233,10 @@ impl<'a> Parser<'a> {
 
     fn parse_args(&mut self) {}
 
+    fn parse_attrib(&mut self) -> Option<Span<Attrib>>{
+        None
+    }
+    
     fn name_list(&mut self) -> Option<Span<NameList>> {
         let mut vec = Vec::new();
 
@@ -280,8 +321,7 @@ impl<'a> Parser<'a> {
 
 #[test]
 fn test() {
-    let lua = r#"
-    ...
+    let lua = r#"...
     hello
     hello,...
     list,two,three
@@ -289,8 +329,15 @@ fn test() {
         hello, this, is, a,...
     "#;
     let mut parser = Parser::new(Tokenizer::new(lua));
-    while let Some(list) = parser.param_list(){
-
-        println!("{:#?}",list);
+    while let Some(list) = parser.param_list() {
+        let fmt = SpanFmt {
+            span: list.span,
+            original: lua,
+            message: Some(" Cool :3"),
+            kind: crate::lua::tokenizer::token::Kind::Error(55),
+            filename: "nothing/here/to/see.rs",
+        };
+        print!("{}", fmt);
+        println!("{:#?}\n", list.val)
     }
 }

@@ -15,27 +15,27 @@ pub(super) struct Position {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Span<T> {
-    pub span: TokenMeta,
+    pub span: SpanD,
     pub val: T,
 }
 
 impl<T> Span<T> {
-    pub fn new(val: T, span: TokenMeta) -> Self {
+    pub fn new(val: T, span: SpanD) -> Self {
         Self { val, span }
     }
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub struct TokenMeta {
+pub struct SpanD {
     pub line: u32,
     pub col: u32,
     pub offset: u32,
     pub len: u32,
 }
 
-impl TokenMeta {
+impl SpanD {
     pub(super) fn start_end(start: Position, end: Position) -> Self {
-        TokenMeta {
+        SpanD {
             line: start.line as u32,
             col: start.col as u32,
             offset: start.offset as u32,
@@ -508,7 +508,8 @@ impl<'a> std::iter::Iterator for Tokenizer<'a> {
                 State::SingleLineComment => match c {
                     Some('\n') | None => {
                         ret = Some(Ok(Token::SingleLineComment(
-                            self.str[self.start.offset + 2 * '/'.len_utf8()..self.current.offset].into(),
+                            self.str[self.start.offset + 2 * '/'.len_utf8()..self.current.offset]
+                                .into(),
                         )))
                     }
                     _ => {}
@@ -521,7 +522,7 @@ impl<'a> std::iter::Iterator for Tokenizer<'a> {
                     Some('=') => self.state = State::LBrack(indent + 1),
                     _ => {
                         // this is horrible
-                        ret_meta = Some(TokenMeta::start_size(self.string_escape_start, 1));
+                        ret_meta = Some(SpanD::start_size(self.string_escape_start, 1));
                         self.string_escape_start.col += 1;
                         self.string_escape_start.offset += 1;
                         ret = Some(Ok(Token::LBracket));
@@ -533,13 +534,13 @@ impl<'a> std::iter::Iterator for Tokenizer<'a> {
                     if indent == 0 {
                         self.state = State::Default;
                     } else if indent == 1 {
-                        ret_meta = Some(TokenMeta::start_size(self.string_escape_start, 1));
+                        ret_meta = Some(SpanD::start_size(self.string_escape_start, 1));
                         self.string_escape_start.col += 1;
                         self.string_escape_start.offset += 1;
                         ok_ret_state = State::LBrackBackoff(indent - 1);
                         ret = Some(Ok(Token::Eq))
                     } else {
-                        ret_meta = Some(TokenMeta::start_size(self.string_escape_start, 2));
+                        ret_meta = Some(SpanD::start_size(self.string_escape_start, 2));
                         self.string_escape_start.col += 2;
                         self.string_escape_start.offset += 2;
                         ok_ret_state = State::LBrackBackoff(indent - 2);
@@ -702,7 +703,7 @@ impl<'a> std::iter::Iterator for Tokenizer<'a> {
                         consume = false;
                         err_ret_state = State::String(end);
                         update_start_on_error = false;
-                        ret_meta = Some(TokenMeta::start_end(self.string_escape_start, processing));
+                        ret_meta = Some(SpanD::start_end(self.string_escape_start, processing));
                         ret = Some(Err(TokenizerError::InvalidEscape(
                             &self.str[self.string_escape_start.offset..processing.offset],
                         )))
@@ -804,7 +805,7 @@ impl<'a> std::iter::Iterator for Tokenizer<'a> {
                     Some('_') => {}
                     Some(c @ '2'..='9') => {
                         err_ret_state = State::NumericBin;
-                        ret_meta = Some(TokenMeta::start_end(self.current, processing));
+                        ret_meta = Some(SpanD::start_end(self.current, processing));
                         update_start_on_error = false;
                         ret = Some(Err(TokenizerError::InvalidBase2Digit(c)))
                     }
@@ -818,7 +819,7 @@ impl<'a> std::iter::Iterator for Tokenizer<'a> {
                     Some('_') => {}
                     Some(c @ '2'..='9') => {
                         err_ret_state = State::NumericBin;
-                        ret_meta = Some(TokenMeta::start_end(self.current, processing));
+                        ret_meta = Some(SpanD::start_end(self.current, processing));
                         update_start_on_error = false;
                         ret = Some(Err(TokenizerError::InvalidBase2Digit(c)))
                     }
@@ -862,8 +863,7 @@ impl<'a> std::iter::Iterator for Tokenizer<'a> {
             if let Some(ret_some) = ret {
                 match ret_some {
                     Ok(token) => {
-                        let meta =
-                            ret_meta.unwrap_or(TokenMeta::start_end(self.start, self.current));
+                        let meta = ret_meta.unwrap_or(SpanD::start_end(self.start, self.current));
                         self.start = self.current;
                         self.state = ok_ret_state;
                         if matches!(
@@ -877,8 +877,7 @@ impl<'a> std::iter::Iterator for Tokenizer<'a> {
                         return Some(Ok(Span::new(token, meta)));
                     }
                     Err(err) => {
-                        let meta =
-                            ret_meta.unwrap_or(TokenMeta::start_end(self.start, self.current));
+                        let meta = ret_meta.unwrap_or(SpanD::start_end(self.start, self.current));
                         if update_start_on_error {
                             self.start = self.current;
                         }
