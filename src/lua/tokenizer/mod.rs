@@ -52,7 +52,7 @@ impl SpanD {
         }
     }
 
-    pub fn extend_range(self, other: Self) -> Self {
+    pub fn extend_range(&self, other: &Self) -> Self {
         let start_of = self.offset.min(other.offset);
         let end = (self.offset + self.len).max(other.offset + other.len);
         let (line, col) = if self.line < other.line {

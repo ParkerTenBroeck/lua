@@ -1,4 +1,7 @@
-use std::{collections::{HashMap, VecDeque}, iter::Peekable};
+use std::{
+    collections::{HashMap, VecDeque},
+    iter::Peekable,
+};
 
 use crate::lua::tokenizer::{
     token::{SpanFmt, Token},
@@ -20,23 +23,21 @@ pub enum Ast {
     // Ident(<'a>)
 }
 #[derive(Debug, Clone)]
-pub struct Block(Chunk);
-#[derive(Debug, Clone)]
-pub struct Chunk(Vec<Statement>);
+pub struct Block(Vec<Statement>);
 
 #[derive(Debug, Clone)]
 pub enum Statement {
     Assign(Vec<(Var, Expr)>),
     FunctionCall(),
-    Label(),
+    Label(Label),
     Break,
-    Goto(String),
+    Goto(Name),
     Block(Block),
     While(Expr, Block),
 
     If(Expr, Block, Vec<(Expr, Block)>, Option<(Expr, Block)>),
-    Function(String, FunctionBody),
-    LocalFunction(String, FunctionBody),
+    Function(Name, FunctionBody),
+    LocalFunction(Name, FunctionBody),
     LocalVerDef(AttNameList),
     LocalVerDec(AttNameList, ExprList),
 }
@@ -49,6 +50,9 @@ pub struct AttNameList(Vec<()>);
 
 #[derive(Debug, Clone)]
 pub struct Attrib(Name);
+
+#[derive(Debug, Clone)]
+pub struct Label(Name);
 
 #[derive(Debug, Clone)]
 pub struct FunctionBody(ParamList, Block);
@@ -97,7 +101,8 @@ pub enum Expr {
 
 pub struct Parser<'a> {
     tokenizer_errors: Vec<Span<TokenizerError<'a>>>,
-    tokenizer: Peekable<Tokenizer<'a>>,
+    tokenizer: Tokenizer<'a>,
+    queue: VecDeque<Option<Span<Token<'a>>>>,
 }
 // pub type ParseResult = Result<Ast>
 
@@ -130,51 +135,55 @@ macro_rules! next_if_match {
         }
     };
 }
+macro_rules! tok {
+    ($pat:pat) => {
+        Some(Span { val: $pat, .. })
+    };
+    ($pat:pat, $span:ident) => {
+        Some(Span {
+            val: $pat,
+            span: $span,
+        })
+    };
+}
 
 impl<'a> Parser<'a> {
     pub fn new(tokenizer: Tokenizer<'a>) -> Self {
         Self {
-            tokenizer: tokenizer.peekable(),
+            tokenizer: tokenizer,
+            queue: VecDeque::new(),
             tokenizer_errors: Default::default(),
         }
     }
 
-    fn next_n<const N: usize>(&mut self) -> [Option<Span<Token<'a>>>; N]{
-        // None.unwrap
-        std::array::from_fn(|_|{self.next_tok()})
+    fn next_n<const N: usize>(&mut self) -> [Option<Span<Token<'a>>>; N] {
+        std::array::from_fn(|_| self.queue.pop_front().unwrap_or_else(|| self.next_tok()))
     }
 
-    fn test(&mut self){
-        macro_rules! tok {
-            ($pat:pat) => {
-                Some(Span{val: $pat, ..})
-            };
-            ($pat:pat, $span:ident) => {
-                Some(Span{val: $pat, span: $span})
-            };
+    fn peek_n<const N: usize>(&mut self) -> [&Option<Span<Token<'a>>>; N] {
+        while self.queue.len() < N {
+            self.queue.push_back(match self.tokenizer.next() {
+                Some(some) => match some {
+                    Ok(ok) => Some(ok),
+                    Err(err) => {
+                        self.tokenizer_errors.push(*err);
+                        continue;
+                    }
+                },
+                None => None,
+            })
         }
-        match self.next_n::<3>(){
-            [tok!(Token::Lt, ltspan), tok!(Token::Ident(ident), identspan), tok!(Token::Gt, gtspan)] => {
-                println!("{}", ident)
-            }
-            _ => {}
-        }
+        std::array::from_fn(|n| self.queue.get(n).unwrap())
     }
 
-    fn peek_tok(&mut self) -> Option<&Span<Token<'a>>> {
-        
-        loop {
-            let tok = self.tokenizer.peek()?;
-            if tok.is_ok() {
-                // stupid lifetime hack but whatever
-                return self.tokenizer.peek()?.as_ref().ok();
-            }
-
-            self.tokenizer_errors.push(*self.tokenizer.next()?.err()?);
-        }
+    fn peek_tok(&mut self) -> &Option<Span<Token<'a>>> {
+        self.peek_n::<1>()[0]
     }
 
     fn next_tok(&mut self) -> Option<Span<Token<'a>>> {
+        if !self.queue.is_empty(){
+            return self.queue.pop_front().unwrap();
+        }
         let mut tok = self.tokenizer.next()?;
         while tok.is_err() {
             self.tokenizer_errors.push(*tok.err()?);
@@ -182,6 +191,16 @@ impl<'a> Parser<'a> {
         }
         tok.ok()
     }
+
+    // fn give_n_back<const N: usize>(&mut self, tokens: [Option<Span<Token<'a>>>; N]){
+    //     for tok in tokens.into_iter().rev(){
+    //         self.queue.push_front(tok)
+    //     }
+    // }
+
+    // fn give_back(&mut self, token: Option<Span<Token<'a>>>){
+    //     self.give_n_back([token])
+    // }
 
     pub fn parse_str(str: &'a str) -> Result<Vec<Statement>, ()> {
         let mut myself = Self::new(Tokenizer::new(str));
@@ -204,39 +223,192 @@ impl<'a> Parser<'a> {
         vec
     }
 
-    pub fn parse_statement(&mut self) -> Option<Span<Statement>> {
+    fn parse_block(&mut self) -> Option<Span<Block>>{
+        let mut vec = Vec::new();
+        let first = self.parse_statement()?;
+        vec.push(first.val);
+        let mut span = first.span; 
+        while let Some(next) = self.parse_statement(){
+            vec.push(next.val);
+            span = span.extend_range(&next.span); 
+        }
+        Some(Span::new(Block(vec), span))
+    }
+
+    fn parse_statement(&mut self) -> Option<Span<Statement>> {
         let Span {
             mut span,
             val: start,
-        } = if let Some(some) = self.peek_tok() {
-            some
-        } else {
-            return None;
+        } = loop {
+            if let Some(some) = self.peek_tok() {
+                if some.val != Token::Semicolon{
+                    break some;
+                }
+                self.next_tok();
+            } else {
+                return None;
+            }
         };
         let state = match start {
-            Token::Break => Statement::Break,
-            Token::Goto => {
-                next_match!(self, tok, nspan,
-                    if Token::Ident(ident), {
-                        span = span.extend_range(nspan);
-                        Statement::Goto(ident.to_string())
-                    }else{
-                        //invalid token
-                        todo!();
+            Token::Break |
+            Token::Goto |
+            Token:: Do |
+            Token::While |
+            Token::Repeat |
+            Token::If |
+            Token::For |
+            Token::Function |
+            Token::Local => {
+                match self.next_tok().unwrap().val{
+                    Token::Break => Statement::Break,
+                    Token::Goto => match self.next_tok(){
+                        tok!(Token::Ident(name)) => 
+                            Statement::Goto(Name(name.into())),
+                        // error cases
+                        None => todo!(),
+                        Some(_tok) => todo!()
                     }
-                )
+                    Token::Do => todo!(),
+                    Token::While => todo!(),
+                    Token::Repeat => todo!(),
+                    Token::If => todo!(),
+                    Token::For => todo!(),
+                    Token::Function => match self.next_tok(){
+                        tok!(Token::Ident(name), ident_span) => {
+                            let body =  self.parse_function_body();
+                            span = span.extend_range(&ident_span).extend_range(&body.span);
+                            Statement::LocalFunction(Name(name.into()),body.val)
+                        }
+                        Some(_) => {todo!()}
+                        None => {todo!()}
+                    },
+                    Token::Local => {
+                        match self.peek_n::<2>(){
+                            [tok!(Token::Ident(_) | Token::Lt), _] => 
+                                todo!(),
+
+                            [tok!(Token::Function, func_span), tok!(Token::Ident(name), ident_span)] => {
+                                let name = Name(name.into());
+                                let func_span = *func_span;
+                                let ident_span = *ident_span;
+                                self.next_n::<2>();
+                                let body =  self.parse_function_body();
+                                span = span.extend_range(&func_span).extend_range(&ident_span).extend_range(&body.span);
+                                Statement::LocalFunction(name,body.val)
+                            },
+                            
+                            // error cases
+                            [tok!(Token::Function), _] => 
+                                todo!(),
+                            [None, _] => todo!(),
+                            [Some(_tok), _] => todo!()
+                        }
+                    }
+                    _ => unreachable!(),
+                }
+            }
+            Token::ColonColon => {
+                if let Some(label) = self.parse_label(){
+                    span = span.extend_range(&label.span);
+                    Statement::Label(label.val)
+                }else{
+                    Statement::Label(Label(Name(String::new())))
+                }
             }
             _ => return None,
         };
         Some(Span::new(state, span))
     }
 
-    fn parse_args(&mut self) {}
+    fn parse_function_body(&mut self) -> Span<FunctionBody>{
+        let mut span;
+        match self.next_tok(){
+            tok!(Token::LPar, lpar_span) => {
+                span = lpar_span;
+            }
+            Some(_) => {todo!()}
+            None => {todo!()}
+        }
 
-    fn parse_attrib(&mut self) -> Option<Span<Attrib>>{
-        None
+        let param = if let Some(some) = self.param_list(){
+            span = span.extend_range(&some.span);
+            some.val
+        }else{
+            todo!()
+        };
+
+        match self.next_tok(){
+            tok!(Token::RPar, rpar_span) => {
+                span = span.extend_range(&rpar_span);
+            }
+            Some(_) => {todo!()}
+            None => {todo!()}
+        }
+        
+        let body = self.parse_block();
+        let body = if let Some(body) = body{
+            span = span.extend_range(&body.span);
+            body.val
+        }else{
+            Block(Vec::new())
+        };
+
+        match self.next_tok(){
+            tok!(Token::End, rpar_span) => {
+                span = span.extend_range(&rpar_span);
+            }
+            Some(_) => {todo!()}
+            None => {todo!()}
+        }
+
+        Span::new(FunctionBody(param, body), span)
     }
-    
+
+
+    fn parse_attrib(&mut self) -> Option<Span<Attrib>> {
+        match self.peek_n::<3>() {
+            [tok!(Token::Lt, ltspan), tok!(Token::Ident(ident), _identspan), tok!(Token::Gt, gtspan)] =>
+            {
+                let span = ltspan.extend_range(gtspan);
+                let ret = Some(Span::new(Attrib(Name(ident.into())), span));
+                // consume the accepted tokens
+                self.next_n::<3>();
+                ret
+            }
+            // error cases we can report on 
+            [tok!(Token::Lt, _ltspan), tok!(Token::Ident(_), _identspan), None] =>{
+                todo!()
+            }
+            [tok!(Token::Lt, _ltspan), tok!(Token::Ident(_), _identspan), tok!(_, _gtspan)] =>{
+                todo!()
+            }
+            _ => None,
+        }
+    }
+
+    fn parse_label(&mut self) -> Option<Span<Label>> {
+        match self.peek_n::<3>() {
+            [tok!(Token::ColonColon, ltspan), tok!(Token::Ident(ident), identspan), tok!(Token::ColonColon, gtspan)] =>
+            {
+                let span = ltspan.extend_range(gtspan);
+                let ret = Some(Span::new(Label(Name(ident.into())), span));
+                // consume the accepted tokens
+                self.next_n::<3>();
+                ret
+            }
+            // error cases we can report on 
+            [tok!(Token::ColonColon, ltspan), tok!(Token::Ident(ident), identspan), None] =>{
+                todo!()
+            }
+            [tok!(Token::ColonColon, ltspan), tok!(Token::Ident(ident), identspan), tok!(_, gtspan)] =>{
+                todo!()
+            }
+            _ => None,
+        }
+    }
+
+    // fn parse_fnname(&mut self) -> O 
+
     fn name_list(&mut self) -> Option<Span<NameList>> {
         let mut vec = Vec::new();
 
@@ -249,12 +421,12 @@ impl<'a> Parser<'a> {
 
         loop {
             next_if_match!(self, nspan, if Token::Comma, {
-                span = span.extend_range(nspan);
+                span = span.extend_range(&nspan);
             }else{
                 break;
             });
             next_match!(self, tok, nspan, if Token::Ident(ident), {
-                span = span.extend_range(nspan);
+                span = span.extend_range(&nspan);
                 vec.push(ident.to_string());
             }else{
                 //invalid token
@@ -289,17 +461,17 @@ impl<'a> Parser<'a> {
 
         loop {
             next_if_match!(self, nspan, if Token::Comma, {
-                span = span.extend_range(nspan);
+                span = span.extend_range(&nspan);
             }else{
                 trailing = false;
                 break;
             });
             next_match!(self, tok, nspan, if Token::Ident(ident), {
-                span = span.extend_range(nspan);
+                span = span.extend_range(&nspan);
                 vec.push(ident.to_string());
             }else{
                 if let Some(Span{span: nspan, val: Token::DotDotDot}) = tok{
-                    span = span.extend_range(nspan);
+                    span = span.extend_range(&nspan);
                     trailing = true;
                     break;
                 }else{
@@ -321,15 +493,22 @@ impl<'a> Parser<'a> {
 
 #[test]
 fn test() {
-    let lua = r#"...
-    hello
-    hello,...
-    list,two,three
-    hello, this, is, a...
-        hello, this, is, a,...
+    let lua = r#"
+    ::bruh_34::
+    function bruh (a,c,b,...) 
+        ::bruh_44::
+        ::bruh_22::
+    end
     "#;
+    // " ...
+    // hello
+    // hello,...
+    // list,two,three
+    // hello, this, is, a...
+    //     hello, this, is, a,...";
+
     let mut parser = Parser::new(Tokenizer::new(lua));
-    while let Some(list) = parser.param_list() {
+    while let Some(list) = parser.parse_block() {
         let fmt = SpanFmt {
             span: list.span,
             original: lua,

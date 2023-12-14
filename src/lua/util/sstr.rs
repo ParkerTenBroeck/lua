@@ -39,13 +39,37 @@ impl<'a> From<&'a str> for Sstr<'a> {
     }
 }
 
+impl<'a> From<Sstr<'a>> for &'a str {
+    fn from(value: Sstr<'a>) -> Self {
+        value.as_str()
+    }
+}
+
+impl<'a> From<&Sstr<'a>> for &'a str {
+    fn from(value: &Sstr<'a>) -> Self {
+        value.as_str()
+    }
+}
+
+impl<'a> From<Sstr<'a>> for String {
+    fn from(value: Sstr<'a>) -> Self {
+        value.as_str().into()
+    }
+}
+
+impl<'a> From<&Sstr<'a>> for String {
+    fn from(value: &Sstr<'a>) -> Self {
+        value.as_str().into()
+    }
+}
+
 impl<'a> std::fmt::Debug for Sstr<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         std::fmt::Debug::fmt(self.as_str(), f)
     }
 }
 
-impl<'a> std::fmt::Display for Sstr<'a>{
+impl<'a> std::fmt::Display for Sstr<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.as_str().fmt(f)
     }
@@ -68,4 +92,3 @@ impl<'a> std::hash::Hash for Sstr<'a> {
         self.as_str().hash(state)
     }
 }
-
