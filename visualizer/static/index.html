@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+    <meta name="color-scheme" content="light dark">
+
+<head>
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+
+    <title>
+        Compiler Test
+    </title>
+    <style>
+        body {
+            font-family: Calibri, Segoe, "Segoe UI", "Gill Sans", "Gill Sans MT", sans-serif;
+            background-color: #1f1f1f;
+        }
+
+        /* It's supposed to look like a tree diagram */
+        .tree,
+        .tree ul,
+        .tree li {
+            list-style: none;
+            margin: 0;
+            padding: 0;
+            position: relative;
+        }
+
+        .tree {
+            margin: 0 0 1em;
+            text-align: center;
+        }
+
+        .tree,
+        .tree ul {
+            display: table;
+        }
+
+        .tree ul {
+            width: 100%;
+        }
+
+        .tree li {
+            display: table-cell;
+            padding: .5em 0;
+            vertical-align: top;
+        }
+
+        /* _________ */
+        .tree li:before {
+            outline: solid 1px #666;
+            content: "";
+            left: 0;
+            position: absolute;
+            right: 0;
+            top: 0;
+        }
+
+        .tree li:first-child:before {
+            left: 50%;
+        }
+
+        .tree li:last-child:before {
+            right: 50%;
+        }
+
+        .tree code,
+        .tree span {
+            border: solid .1em #666;
+            border-radius: .2em;
+            display: inline-block;
+            margin: 0 .2em .5em;
+            padding: .2em .5em;
+            position: relative;
+        }
+
+        /* If the tree represents DOM structure */
+        .tree code {
+            color: #aaa;
+            font-family: monaco, Consolas, 'Lucida Console', monospace;
+        }
+
+        /* | */
+        .tree ul:before,
+        .tree code:before,
+        .tree span:before {
+            outline: solid 1px #666;
+            content: "";
+            height: .5em;
+            left: 50%;
+            position: absolute;
+        }
+
+        .tree ul:before {
+            top: -.5em;
+        }
+
+        .tree code:before,
+        .tree span:before {
+            top: -.55em;
+        }
+
+        /* The root node doesn't connect upwards */
+        .tree>li {
+            margin-top: 0;
+        }
+
+        .tree>li:before,
+        .tree>li:after,
+        .tree>li>code:before,
+        .tree>li>span:before {
+            outline: none;
+        }
+        html,
+body {
+	height: 100%;
+}
+    </style>
+</head>
+
+<body>
+        <div style="display: flex;justify-content: center;align-items: center;flex-direction: column;height:100%">
+            <div style="display: flex;width: 100%;height: 50%;">
+                <textarea spellcheck="false" style="margin-right:5px;width:50%;;font-size:16px"id="input" onkeyup="update(this)">
+::bruh_34::
+function bruh (a,c,b,...) 
+    ::bruh_44::
+    ::bruh_22::
+    function inner_func (aa,cc,bb) 
+        break;
+        goto WOWOOWOWOOW
+    end
+end
+                </textarea>
+            <pre style="max-width:50%;padding-left:5px;border:1px solid black;white-space: pre-wrap;font-size:16px " ><code id = "output"></code></pre>   
+            </div>
+            
+            <div style="max-width: 100vw;max-height: 50vw;">
+                <ul style="overflow:scroll;" id="tree" class="tree">
+                    <li>
+        
+                        <span>bruh1</span>
+                        <ul>
+        
+                            <li> <code>bruh</code></li>
+                            <li> <code>bruh</code></li>
+                        </ul>
+                    </li>
+                </ul>
+            </div>
+        </div>
+</body>
+<script>
+    update.update = 0;
+    update(document.getElementById("input"));
+
+    async function parse(text) {
+        return await (await fetch("/api/tokenize/" + text, {
+            method: "GET",
+            headers: {
+                "Content-type": "application/json; charset=UTF-8"
+            }
+        })).text()
+    }
+
+    async function update(input){
+        update.update += 1;
+        while(update.update == 1){
+            await new Promise(r => setTimeout(r, 300));
+            if (update.update == 1){
+                update.update = 0;
+                await update_parse(input);
+                await update_compiler(input);
+            }else{
+                update.update = 1;
+            }
+        }
+        
+    }
+
+    test();
+    function test(){
+        let input = document.getElementById("input");
+        let range = document.createRange();
+        range.setStart(input.firstChild, 10);
+        range.setEnd(input.firstChild, 20);
+        let span = document.createElement("span");
+        span.style = "background-color:Gray;";
+        range.surroundContents(span);
+    }
+    
+    async function update_parse(input){
+        let text = input.value;
+        let output = document.getElementById("output");
+
+        let send = encodeURI(text);
+        send = send.replaceAll("#", "%23");
+        let tokenz = await parse(send);
+
+        output.innerHTML = tokenz;
+    }
+
+    async function compile(val) {
+        return await (await fetch("/api/compile/" + val, {
+            method: "GET",
+            headers: {
+                "Content-type": "application/json; charset=UTF-8"
+            }
+        })).text()
+    }
+
+    async function update_compiler(val) {
+        let text = val.value;
+        text = encodeURI(text);
+        let res = await compile(text);
+
+        let tree = document.getElementById("tree");
+        tree.innerHTML = res;
+    }
+</script>
+
+</html>

@@ -1,13 +1,12 @@
 [package]
-name = "bad_lua"
+name = "visualizer"
 version = "0.1.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
-[workspace]
-members = ["./visualizer"]
 
 [dependencies]
-byteyarn = "*"
-str-buf = "*"
+bad_lua = {path = "../"}
+serde = "*"
+rocket = {version = "0.5.0-rc.4", features = ["json"]}

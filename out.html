@@ -1,0 +1,140 @@
+
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+
+    <title>
+        Compiler Test
+    </title>
+    <style>
+        body {
+            font-family: Calibri, Segoe, "Segoe UI", "Gill Sans", "Gill Sans MT", sans-serif;
+        }
+
+        /* It's supposed to look like a tree diagram */
+        .tree,
+        .tree ul,
+        .tree li {
+            list-style: none;
+            margin: 0;
+            padding: 0;
+            position: relative;
+        }
+
+        .tree {
+            margin: 0 0 1em;
+            text-align: center;
+        }
+
+        .tree,
+        .tree ul {
+            display: table;
+        }
+
+        .tree ul {
+            width: 100%;
+        }
+
+        .tree li {
+            display: table-cell;
+            padding: .5em 0;
+            vertical-align: top;
+        }
+
+        /* _________ */
+        .tree li:before {
+            outline: solid 1px #666;
+            content: "";
+            left: 0;
+            position: absolute;
+            right: 0;
+            top: 0;
+        }
+
+        .tree li:first-child:before {
+            left: 50%;
+        }
+
+        .tree li:last-child:before {
+            right: 50%;
+        }
+
+        .tree code,
+        .tree span {
+            border: solid .1em #666;
+            border-radius: .2em;
+            display: inline-block;
+            margin: 0 .2em .5em;
+            padding: .2em .5em;
+            position: relative;
+        }
+
+        /* If the tree represents DOM structure */
+        .tree code {
+            font-family: monaco, Consolas, 'Lucida Console', monospace;
+        }
+
+        /* | */
+        .tree ul:before,
+        .tree code:before,
+        .tree span:before {
+            outline: solid 1px #666;
+            content: "";
+            height: .5em;
+            left: 50%;
+            position: absolute;
+        }
+
+        .tree ul:before {
+            top: -.5em;
+        }
+
+        .tree code:before,
+        .tree span:before {
+            top: -.55em;
+        }
+
+        /* The root node doesn't connect upwards */
+        .tree>li {
+            margin-top: 0;
+        }
+
+        .tree>li:before,
+        .tree>li:after,
+        .tree>li>code:before,
+        .tree>li>span:before {
+            outline: none;
+        }
+        html,
+body {
+	height: 100%;
+}
+    </style>
+</head>
+
+<body>
+        <div style="display: flex;justify-content: center;align-items: center;flex-direction: column;height:100%">
+            <div style="display: flex;width: 100%;height: 50%;">
+                <textarea style="margin-right:5px;width:50%;;font-size:16px"id="input" onkeyup="update(this)">
+                    id>5&creation_date<"2023-08-29 23:01:57.968+00:00"&(!(qc_answers:"%:i_%"|qc_answers:"%:_i%")&!(sales_order=null|qc1_initial=null|asm_serial=null))&(finalized=true)
+                </textarea>
+            <pre style="max-width:50%;padding-left:5px;border:1px solid black;white-space: pre-wrap;font-size:16px " ><code id = "output"></code></pre>   
+            </div>
+            
+            <div style="max-width: 100vw;max-height: 50vw;">
+                <ul style="overflow:scroll;" id="tree" class="tree">
+                    <li>
+<li><code col=4 len=184 line=1 offset=5>block</code><ul><li><code col=4 len=11 line=1 offset=5>label</code><ul><li><code col=6 len=7 line=1 offset=7>bruh_34</code></li></ul></li><li><code col=4 len=168 line=2 offset=21>localfuncdef</code><ul><li><code col=13 len=4 line=2 offset=30>bruh</code></li><li><code col=18 len=154 line=2 offset=35>funcbody</code><ul><li><code col=19 len=9 line=2 offset=36>paramlist</code><ul><li><code col=19 len=5 line=2 offset=36>namelist</code><ul><li><code col=19 len=1 line=2 offset=36>a</code></li><li><code col=19 len=3 line=2 offset=36>c</code></li><li><code col=19 len=5 line=2 offset=36>b</code></li></ul></li><li><code>trailing</code></li></ul></li><li><code col=8 len=125 line=3 offset=56>block</code><ul><li><code col=8 len=11 line=3 offset=56>label</code><ul><li><code col=10 len=7 line=3 offset=58>bruh_44</code></li></ul></li><li><code col=8 len=11 line=4 offset=76>label</code><ul><li><code col=10 len=7 line=4 offset=78>bruh_22</code></li></ul></li><li><code col=8 len=85 line=5 offset=96>localfuncdef</code><ul><li><code col=17 len=10 line=5 offset=105>inner_func</code></li><li><code col=28 len=65 line=5 offset=116>funcbody</code><ul><li><code col=29 len=8 line=5 offset=117>paramlist</code><ul><li><code col=29 len=8 line=5 offset=117>namelist</code><ul><li><code col=29 len=2 line=5 offset=117>aa</code></li><li><code col=29 len=5 line=5 offset=117>cc</code></li><li><code col=29 len=8 line=5 offset=117>bb</code></li></ul></li></ul></li><li><code col=9 len=32 line=6 offset=137>block</code><ul><li><code col=9 len=5 line=6 offset=137>break</code></li><li><code col=9 len=16 line=7 offset=153>goto</code><ul><li><code col=14 len=11 line=7 offset=158>WOWOOWOWOOW</code></li></ul></li></ul></li></ul></li></ul></li></ul></li></ul></li></ul></li></ul></li>
+</li>
+</ul>
+</div>
+</div>
+</body>
+<script>
+</script>
+
+</html>
