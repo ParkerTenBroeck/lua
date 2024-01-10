@@ -190,7 +190,7 @@ fn rocket() -> _ {
   .mount(
     "/",
     FileServer::new(
-        "./static",
+        "./visualizer/static/",
         Options::DotFiles | Options::Index | Options::IndexFile,
     )
     .rank(5),
